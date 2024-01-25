@@ -1,0 +1,490 @@
+//SPDX-License-Identifier: NO LICENSE
+//2024-1-25
+//ANZL Inc 
+/// @custom:security-contact info@anzlinc.com
+//MATIC-Mainnet-CA1:0x056F155A990EE3432cBCdE5d1bA524a811Ed25a4
+pragma solidity ^0.8.20;
+
+contract anzlinc_ID_Tag{
+    string public nameOfThisContract =
+    "Anzlinc_ID_Tag_2024-1st"
+    ;
+    
+    string public aboutThisContract = 
+    "<About this contract>"
+    "This contract is a EOA-bound/soul-bound/Non-transferable TOTP tag."
+    "This contract is NOT ERC-721."
+    "This contract is vending machine.(WEB3 based TOTP-nonce play juke box)"
+    "This contract is TOTP-nonce generation service with expiry date."
+    "This contract set 1year-(blocknumber)-valid TOTP-nonce generation tag to EOA." 
+    "This contract is utility token contract.(Non-transferable tag smart contract.)"
+    "This contract is not security token."
+    "!The service may be suspended by the service configurator/owner for maintenance."
+    "!The number of tags sold is limited pieces in this smart contract."
+    "!If the tag is sold out, the owner will consider deploying the next contract."
+    "!If next contract is created configurator/owner show next contract address(and chain id or another access data) ."
+    "<About tag expiry date>"
+    "Expiry duration of tag in this contract is checkable at [codeValidBlockNumber]."
+    "(In this contract [code Valid Block Number]equal to 1 year block number )"
+    "Expiry date of your purchased tag is checkable at [pidToValidBlockNumber(your pid)]"
+    "<About tag purchasing>"
+    "You cannot purchase a tag even if you send MATIC to this contract address without using the [payAndSetPidTag_withValidBlockNumber] function."
+    "[payAndSetPidTag_withValidBlockNumber] payable function returns(bool result,uint purchased_Pid)."
+    "If you want buy tag ,[payAndSetPidTag_withValidBlockNumber] payable function's pay value is [pidSalesPrice]."
+    "You can check your pid from returns(purchased_Pid)."
+    "You can check your pid from seeking public mapping variable [ pidToUser(pid) ]."
+    "Also You can check your pid from seeking public mapping variable [ pidToUser(pid) ]."
+    "[ pidToUser ] is holder data of tag which plate/product ID (pid)"
+    "<About tag price>"
+    "The public tag price variable [pidSalesPrice] is modified by the owner."
+    "The tag price is higher than 5000JPY or 50USD."
+    "Tag Prices are set to reflect inflation."
+    "In this contract, pidSalesPrice is higher than 70-140MATIC of MATIC(polygon main net MATIC)."
+    "<Totp code service>"
+    "You can call 6digit totp code from totpCodeCall(with input your holding 1 year valid pid) function."
+    "And check/authenticate code using totpCodeAuth(with input your pid , your 6digit code) function returns true or false of code verify result."
+    //50 US Dollar = 69.472209 Polygon (MATIC) at jan 24 2024.
+    ;
+    
+
+
+    function changeAbout(string memory _new) 
+    public onlyOwner 
+    {
+        aboutThisContract = _new;
+    }
+
+    string public signboardForNextContractIfNeeded = 
+    "The totp calculation function for this contract is valid until [contractValidBlockNumber]."
+    "If we need next contract, owner can log chainId/contract-address in this signboard"
+    ;
+
+    function changeSignboardForNextContractIfNeeded(string memory _new) 
+    public onlyOwner 
+    {
+        signboardForNextContractIfNeeded = _new;
+    }
+
+//constructor:set owner, lock person, deployer
+    constructor()
+    {
+        // Set the transaction sender as the owner of the contract.
+        owner = payable (msg.sender);
+        // Set lockPerson.
+        lockPerson = payable (msg.sender);
+        // Set deployer
+        deployer = payable (msg.sender);
+    }
+
+    //Emergency comment feature with EOA's unchanging deployer address.
+    address deployer;
+    string public deployerPost = 
+    "Deployer post comment here." "The Deployer's EOA will not be changed to any other EOA."
+    "In the event of an emergency, comments will be recorded in deployerPost according to instructions from Deployer's EOA."
+    ;
+    function changeDeployerPost(string memory _new) 
+    public
+    {
+       require(msg.sender == deployer , "not deployer");
+        deployerPost = _new;
+    }
+
+    
+    //block time. MATIC=2sec. ETH(several ethereum compatible networks) is longer than MATIC.
+    uint public blockTime = 2;
+    
+    //Contract expiration date (expiry block number)    
+        uint public contractValidBlockNumber = 4*365*24*3600 / blockTime;
+        //    uint public contractValidBlockNumber = 4*365*24*3600 / blockTime;//example:4 year valid contract
+
+
+    //Contract expiry block number    
+    uint public blockNumberBeyondWhichThisContractExpires = block.number + contractValidBlockNumber;
+
+    //TAG issuance quantity limit (can be changed later by the contract administrator)
+        uint public pidIssueQuantityLimit=2024;//2024個販売
+        //uint public pidIssueQuantityLimit=2024;//ANZL-INC-TAG2024 pieces limited edition. Premium tag.
+                /*
+                    //When changing the sales limit
+                    function changePidIssueQuantityLimit(uint _newLimit)
+                    public onlyOwner 
+                    {
+                        pidIssueQuantityLimit = _newLimit;
+                    }
+                */
+
+    //TAG expiration date. TOTP nonce generation is stopped after this block number has elapsed.
+        uint256 public codeValidBlockNumber = 365*24*3600 / blockTime;//1year版
+        //uint256 public codeValidBlockNumber = 365*24*3600 / blockTime;//365day = 1year
+
+    //Sales period
+        uint public salesBlockNumber = contractValidBlockNumber - codeValidBlockNumber;
+        uint public lastBlockNumberAvailableForSale = block.number + salesBlockNumber ;     
+
+    //Pid var (Pid = product ID,play ID,ticket product ID,plate ID, tag-product-id )
+        //Increment part of pid. The number of pids indicates the number of sales.
+        uint256 public pidCounter=0;
+        //Tag holder
+        mapping(uint256 => address) public pidToUser;
+        //Tag expiration date (period during which the tag's TOTP code can be called)
+        mapping(uint256 => uint256) public pidToValidBlockNumber;
+
+        //latest Tag of user (for using pid tag)
+        //mapping(address => uint256) public userToLatestPurchasedTags;
+
+    //Set pid function. The part that tags pid- to EOA.
+    function setPidTag_withValidBlockNumber() 
+    internal  
+    lockJudgment 
+    returns(uint)
+    {
+        
+        //Is it a sales period?
+        require(lastBlockNumberAvailableForSale > block.number , "Sales time ended. can not sale tag.");
+        //Is it within the sales limit?
+        require(pidIssueQuantityLimit > pidCounter , "Issue Quantity Limit over. can not sale tag.");
+ 
+        //Prepare the pid to be tagged (incrementing prevents resetting and tagging the same pid twice)
+        pidCounter ++;//Extract new tag pid from 256 uints in stock. increment.
+        uint pid = pidCounter;//Loading pid to tag. 
+
+        //set data
+        pidToUser[pid] = msg.sender;//log the EOA/account of tag(pid) holder.
+        pidToValidBlockNumber[pid] = block.number + codeValidBlockNumber;//log the expiry date of tag(pid).
+        return pid;
+   }
+
+    //onlyPidTagHolder:modifier which check tag holder
+    modifier onlyPidTagHolder(uint256 _pid) {
+        //Request 1: Is tagPid valid? Is the current block number Bn smaller than the expiration date?
+        require(pidToValidBlockNumber[_pid]>block.number, "Pid-tag is invalid"); 
+        //Request 2: Confirm ownership. Check whether the msg.sender address is the owner of the pid tag.
+        require(pidToUser[_pid]==msg.sender, "Msg.sender is not pit-tag-holder account");
+        _;
+    }
+
+
+    //tag price
+    uint256 public pidSalesPrice = 88 ether ;//50-100MATIC
+    
+    function changePidSalesPrice(uint256 _newPrice) 
+    public 
+    onlyOwner 
+    lockJudgment 
+    {
+        pidSalesPrice = _newPrice;
+    }
+
+
+//payETH-SetTag 
+// A vending machine type payable function that attaches a Pid tag to ETH payments.
+    function payAndSetPidTag_withValidBlockNumber() 
+    public payable 
+    lockJudgment
+    noReentrancy//Just in case, prevent re-entry when using internal currency
+    returns(bool result,uint purchased_Pid)
+    {
+            //If the tag price is set, and pid. //(If no tag stock , returns big uint = 862--912")
+            if(msg.value == pidSalesPrice ) { 
+                //set tag 
+                uint pid = setPidTag_withValidBlockNumber(); 
+                return (true,pid);
+            } else {
+                //If not, refund. return:false, and zero.
+                payable(msg.sender).transfer(msg.value);
+                return (false,0);
+            }
+    }
+
+//withdrow: Function to withdraw ETH accumulated in the vending machine to the owner's EOA
+//https://solidity-by-example.org/payable/
+    //Function to withdraw all Ether from this contract.
+    function withdraw_AllBalanceByOwner() 
+    public 
+    onlyOwner 
+    lockJudgment
+    noReentrancy//Just to be safe, prevent re-entry when using internal currency
+    {
+        // get the amount of Ether stored in this contract
+        uint amount = address(this).balance;
+
+        // send all Ether to owner
+        (bool success, ) = owner.call{value: amount}("");
+        require(success, "Failed to send Ether");
+    }
+    //partial amountwithdraw function
+    function withdraw_PartialBalanceByOwner(uint8 _percentMax99) 
+    public 
+    onlyOwner 
+    lockJudgment
+    noReentrancy
+    {
+        require(_percentMax99 < 100,"Please input 0 to 99");
+        // get the amount of Ether stored in this contract
+        uint amount = address(this).balance * _percentMax99 / 100 ;
+
+        // send all Ether to owner
+        (bool success, ) = owner.call{value: amount}("");
+        require(success, "Failed to send Ether");
+    }
+
+//system lock part----------------------
+    modifier lockJudgment() {
+
+        // multi sig/EOA service stopper
+
+            // Must be within the expiration date of the contract.
+            require(blockNumberBeyondWhichThisContractExpires > block.number , "The contract has expired. System Locked.");
+            
+            //lock check. lock is changed by lock person.
+            require(lock==false, "Service stopped by lock person. System Locked.");
+
+            //key check. key is changed by owner.
+            require(key>55, "Service stopped by owner. System Locked.");
+        _; 
+    }
+
+//lock person------
+//lock person can stop totp calc/generatetion/auth.
+    address public lockPerson;
+    modifier onlyLockPerson() {
+        require(msg.sender == lockPerson, "Not lock person");
+        _;
+    }
+    function changeLockPerson(address _newLockPerson)
+    public 
+    onlyLockPerson 
+    validAddress(_newLockPerson)
+    {
+        lockPerson = payable(_newLockPerson);
+    }
+    
+    //contract on/off switch which set by lock person.
+    bool public lock=false;
+    function changelock(bool _newState)
+    public 
+    onlyLockPerson
+    returns (bool)
+    {
+        require(lockPerson==msg.sender, "Not lock person");
+        lock = _newState;
+        return lock;
+    }
+
+//owner part----------------------
+//owner managed TOTP-nounce act.
+    address payable public owner;
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not owner");
+        _;
+    }
+    modifier validAddress(address _addr) {
+        require(_addr != address(0), "Not valid address");
+        _;
+    }
+    function changeOwner(address _newOwner)
+    public 
+    onlyOwner 
+    validAddress(_newOwner)
+    {
+        owner = payable(_newOwner);
+    }
+
+//Code authentication part
+//https://patentscope2.wipo.int/search/ja/detail.jsf?docId=JP359918905&_cid=JP1-LRP0LC-40332-1
+
+    bytes32 keyWord = 0x0secret;
+    //key var of TOTP. key var can changed by onlyOwner.
+    uint256 key = secret;
+    function changeKey(uint256 _newKey)
+    public 
+    onlyOwner 
+    validAddress(msg.sender) 
+    returns (bool)
+    {
+        key = _newKey;
+        return (true);
+    }
+    
+    //otpMp:correction/modify block number variable Managed by onlyOwner.
+    uint256 public otpMp = 10 ;//!Do not set initial value to zero
+    function changeOtpMp(uint256 _newMp)
+    public 
+    onlyOwner
+    validAddress(msg.sender) 
+    returns (bool)
+    {
+        require( _newMp > 0 , "Not _newMp > 0");//request otpMp>0
+        otpMp = _newMp;
+        return (true);
+    }
+
+    //otpDigi: Digit change variable. Managed by onlyOwner.
+    uint256 public otpDigi = 8 ;//!Do not set the initial value to zero. max77
+    function changeOtpDigi(uint256 _newDigi)
+    public 
+    onlyOwner
+    validAddress(msg.sender) 
+    returns (bool)
+    {
+        //Require otpMp>1 
+        //When digi=1, last digit 0 to 9.10-sided dice mode.
+        require( _newDigi > 0 , "Not _newDigi > 0");
+        otpDigi = _newDigi;
+        return (true);
+    }
+
+    function hashCalc(uint256 _pid)
+    private view 
+    lockJudgment 
+    validAddress(msg.sender) 
+    returns (bytes32)
+    {
+        //culc hash
+        bytes32 vp32b = sha256(abi.encodePacked(
+                                _pid,//pid
+                                key,//Kc
+                                keyWord,//data
+                                block.number/otpMp// Bnm = latestBlocknumber / otpMp 
+                            ));
+        return vp32b;
+    }
+    //TOTP nonce calculation part Lock person manages service on/off
+    function codeCalc(uint256 _pid)
+    private view     //[Note] Make it a private function.
+    lockJudgment 
+    validAddress(msg.sender) 
+    returns (uint256)
+    {
+        require(blockNumberBeyondWhichThisContractExpires > block.number , "The contract has expired. System Locked.");
+
+        //culc hash
+        bytes32 vp32b = hashCalc(_pid);
+
+        //Determine n digits
+        uint256 nDigi = 6;//digit
+        uint256 vpUin = uint256(vp32b) % 10**nDigi;
+        //return n digits
+        return vpUin;
+    }
+
+
+
+
+//TOTP generation function accessed by the user.
+    function totpCodeCall(uint256 _pid)
+    public view 
+    validAddress(msg.sender) 
+    onlyPidTagHolder(_pid)//only tag holder account (tag-id is pid) 
+    lockJudgment 
+    returns (uint256)
+    {           
+        //gen totp
+        return codeCalc(_pid);
+    }
+
+
+//TOTP authentication function. 
+//Check the validity of TOTP authentication or a nonce that is valid for a limited time.
+    function totpCodeAuth(uint256 _pid, uint256 _vp) 
+    public view 
+    validAddress(msg.sender)  
+    lockJudgment 
+    returns (bool)
+    {
+        //auth (Anyone can authenticate other than zero address)
+        if ( _vp == codeCalc(_pid)) { 
+            return true ;
+        } else {
+            return false;
+        }
+    } 
+
+
+    //The part where the owner log-strings(log-memo) the pid.
+    //If problem occur, owner log memo.
+    mapping(uint256 => string) public pidToLogByContractOwner;
+    function writePidToLogByContractOwner(uint256 _pid , string memory _owmersLog) 
+    public 
+    lockJudgment 
+    onlyOwner
+    returns (bool)
+    {
+        //set data
+        pidToLogByContractOwner[_pid]=_owmersLog;//log by ContractOwner
+        return true;
+    }
+
+
+
+
+////////////////////////////////////
+    //Validity check function at tag pid's latest Bn. Expiration returns uint zero
+    function checkValidTagPid(uint256 _pid)
+    public view 
+    returns (uint256 blockNumberRemainingUntilExpiration)
+    {
+        //Request 1: Is tagPid valid? Is the current block number Bn smaller than the expiration date?  ReturnsTheNumberOfBlocksUntilExpiration
+        if ( pidToValidBlockNumber[_pid]>block.number) { 
+            //Returns The Number Of Blocks Until Expiration.
+            return pidToValidBlockNumber[_pid] - block.number ;
+        } else {
+            //Returns zero on expiration
+            return 0;
+        }
+    }
+
+
+////////////////////////////////////
+    //noReentrancy
+    bool public locked;
+    modifier noReentrancy() {
+        require(!locked, "No reentrancy");
+
+        locked = true;
+        _;
+        locked = false;
+    }
+
+
+////////////////////////////////////
+//Additional authentication function section. dynamic digi.　(Anzlinc-ID-Tag-only)
+    function codeCalcDynamicDigit(uint256 _pid)
+    private view //[Note] Make it a private function.
+    lockJudgment 
+    validAddress(msg.sender) 
+    returns (uint256)
+    {
+        require(blockNumberBeyondWhichThisContractExpires > block.number , "The contract has expired. System Locked.");
+
+        bytes32 vp32b = hashCalc(_pid);
+        uint256 vpUin = uint256(vp32b) % 10**otpDigi;
+        return vpUin;
+    }
+
+    //TOTP generation function accessed by the user, dynamic number of digits.
+    function totpCodeCallDynamicDigit(uint256 _pid)
+    public view 
+    validAddress(msg.sender) 
+    onlyPidTagHolder(_pid)
+    lockJudgment 
+    returns (uint256)
+    {            
+        return codeCalcDynamicDigit(_pid);
+    }
+   
+    //TOTP authentication function. dynamic digits
+    function totpCodeAuthDynamicDigit(uint256 _pid, uint256 _vp) 
+    public view 
+    validAddress(msg.sender)  
+    lockJudgment 
+    returns (bool)
+    {
+        //auth
+        if ( _vp == codeCalcDynamicDigit(_pid)) { 
+            return true ;
+        } else {
+            return false;
+        }
+    }
+}
